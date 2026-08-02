@@ -479,9 +479,4 @@ elif menu == "📐 Calculateur IRL & Rentabilité":
         st.metric("Rentabilité Nette (avant impôts)", f"{renta_nette:.2f} %")
 ```eof
 
-### 🚀 Comment lancer votre application en 2 minutes :
 
-1. **Installez Streamlit et Pandas** (si ce n'est pas déjà fait) en ouvrant votre terminal :
-   
-```bash
-   pip install streamlit pandas
