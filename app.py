@@ -2,37 +2,37 @@ import streamlit as st
 import pandas as pd
 import datetime
 import io
-import requests
+import json
+import urllib.request
+import urllib.parse
 
 st.set_page_config(
-    page_title="Gestion Locative & Baux",
+    page_title="Gestion Locative Immo",
     page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS for styling
 st.markdown("""
 <style>
     .main-header {
         font-size: 2.2rem;
-        color: #1E293B;
         font-weight: 700;
+        color: #1E3A8A;
         margin-bottom: 0.5rem;
     }
     .sub-header {
-        font-size: 1rem;
-        color: #64748B;
-        margin-bottom: 2rem;
+        font-size: 1.1rem;
+        color: #4B5563;
+        margin-bottom: 1.5rem;
     }
-    .lease-box {
-        background-color: #FFFFFF;
-        border: 2px solid #2563EB;
-        padding: 30px;
-        border-radius: 12px;
-        font-family: 'Times New Roman', Times, serif;
-        line-height: 1.6;
-        color: #111827;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    .card {
+        background-color: #F8FAFC;
+        border-radius: 10px;
+        padding: 20px;
+        border: 1px solid #E2E8F0;
+        margin-bottom: 15px;
     }
     .stButton>button {
         border-radius: 8px;
@@ -41,483 +41,502 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+if "biens" not in st.session_state:
+    st.session_state.biens = pd.DataFrame(columns=[
+        "id", "nom_bien", "type", "adresse", "surface", "pieces", 
+        "loyer_hc", "charges", "depot_garantie", "mode_chauffage"
+    ])
+
+if "locataires" not in st.session_state:
+    st.session_state.locataires = pd.DataFrame(columns=[
+        "id", "civilite", "nom", "prenom", "date_naissance", 
+        "lieu_naissance", "adresse_actuelle", "email", "telephone", "bien_id"
+    ])
+
+if "loyers" not in st.session_state:
+    st.session_state.loyers = pd.DataFrame(columns=[
+        "id", "bien_id", "locataire_id", "mois_annee", "montant_hc", 
+        "montant_charges", "statut", "date_paiement"
+    ])
+
 if "bailleur" not in st.session_state:
     st.session_state.bailleur = {
         "civilite": "M.",
         "nom": "DUPONT",
         "prenom": "Jean",
-        "date_naissance": datetime.date(1980, 5, 12),
-        "lieu_naissance": "Paris (75)",
-        "adresse": "10 Rue de la Paix, 75002 Paris",
-        "email": "jean.dupont@example.com",
+        "date_naissance": "1980-05-15",
+        "lieu_naissance": "Paris (75001)",
+        "adresse": "12 Rue de la Paix, 75002 Paris",
+        "email": "jean.dupont@email.com",
         "telephone": "06 12 34 56 78"
     }
 
-if "biens" not in st.session_state:
-    st.session_state.biens = pd.DataFrame([
-        {
-            "id": 1,
-            "nom": "Appartement T2 Centre",
-            "adresse": "15 Rue de la République, 75011 Paris",
-            "type": "Meublé",
-            "surface": 42.5,
-            "pieces": 2,
-            "loyer_hc": 850.0,
-            "charges": 70.0,
-            "depot_garantie": 1700.0,
-            "date_irl": datetime.date(2023, 7, 1),
-            "irl_base": 140.59
-        }
-    ])
-
-if "locataires" not in st.session_state:
-    st.session_state.locataires = pd.DataFrame([
-        {
-            "id": 1,
-            "civilite": "Mme",
-            "nom": "MARTIN",
-            "prenom": "Sophie",
-            "date_naissance": datetime.date(1995, 8, 24),
-            "lieu_naissance": "Lyon (69)",
-            "adresse_actuelle": "5 Avenue Victor Hugo, 69002 Lyon",
-            "email": "sophie.martin@example.com",
-            "telephone": "06 98 76 54 32",
-            "bien_id": 1,
-            "date_entree": datetime.date(2023, 9, 1)
-        }
-    ])
-
 def chercher_adresse_ban(query):
-    """Recherche des adresses officielles via l'API BAN (data.gouv.fr)."""
-    if not query or len(query) < 3:
+    """Recherche d'adresse via l'API officielle de la Base Adresse Nationale (BAN)"""
+    if not query or len(query.strip()) < 3:
         return []
     try:
-        url = "https://api-adresse.data.gouv.fr/search/"
-        response = requests.get(url, params={"q": query, "limit": 5}, timeout=3)
-        if response.status_code == 200:
-            data = response.json()
-            return [f["properties"]["label"] for f in data.get("features", [])]
+        url = f"https://api-adresse.data.gouv.fr/search/?q={urllib.parse.quote(query)}&limit=5"
+        req = urllib.request.Request(url, headers={'User-Agent': 'StreamlitApp/1.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode())
+            results = [feature['properties']['label'] for feature in data.get('features', [])]
+            return results
     except Exception:
-        pass
-    return []
+        return []
 
-def get_prochain_id(df):
-    """Génère le prochain identifiant unique pour un DataFrame."""
+def get_next_id(df):
     if df.empty:
         return 1
     return int(df["id"].max()) + 1
 
 st.sidebar.title("🏠 Immogestion")
-st.sidebar.markdown("*Gestion Locative & Baux Conformes*")
-
 menu = st.sidebar.radio(
-    "Menu principal",
+    "Navigation",
     [
         "📊 Tableau de Bord",
         "👤 Profil Bailleur",
-        "🏢 Biens Immobiliers",
+        "🏡 Biens Immobiliers",
         "👥 Locataires",
-        "📜 Générateur de Bail",
-        "💶 Loyers & Quittances",
-        "📈 Révision IRL"
+        "📜 Générateur de Bail (ALUR)",
+        "🧾 Suivi des Loyers & Quittances",
+        "🧮 Calculateur Révision IRL"
     ]
 )
 
+st.sidebar.divider()
+st.sidebar.caption("© Application de Gestion Locative v2.0")
+
 if menu == "📊 Tableau de Bord":
-    st.markdown('<div class="main-header">Tableau de Bord</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Aperçu synthétique de vos logements et locataires</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">📊 Tableau de Bord</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Aperçu rapide de votre patrimoine et des encaissements</div>', unsafe_allow_html=True)
 
     col1, col2, col3, col4 = st.columns(4)
     nb_biens = len(st.session_state.biens)
     nb_locataires = len(st.session_state.locataires)
-    total_loyers = st.session_state.biens["loyer_hc"].sum() if not st.session_state.biens.empty else 0
-    total_charges = st.session_state.biens["charges"].sum() if not st.session_state.biens.empty else 0
-
-    col1.metric("Biens sous gestion", nb_biens)
+    
+    total_loyers = 0.0
+    if not st.session_state.biens.empty:
+        total_loyers = float(st.session_state.biens["loyer_hc"].sum() + st.session_state.biens["charges"].sum())
+        
+    col1.metric("Biens gérés", nb_biens)
     col2.metric("Locataires actifs", nb_locataires)
-    col3.metric("Loyers HC mensuels", f"{total_loyers:,.2f} €")
-    col4.metric("Charges mensuelles", f"{total_charges:,.2f} €")
+    col3.metric("Revenus mensuels attendus", f"{total_loyers:.2f} €")
+    col4.metric("Taux d'occupation", f"{100 if nb_biens > 0 and nb_locataires >= nb_biens else (nb_locataires/nb_biens*100 if nb_biens>0 else 0):.0f} %")
 
     st.divider()
+    st.subheader("📋 Liste récapitulative du parc immobilier")
 
-    st.subheader("📋 Liste récapitulative")
     if not st.session_state.biens.empty:
-        df_display = st.session_state.biens.merge(
-            st.session_state.locataires, 
-            left_on="id", 
-            right_on="bien_id", 
-            how="left", 
-            suffixes=("_bien", "_locataire")
-        )
-        st.dataframe(
-            df_display[["nom", "type", "loyer_hc", "charges", "nom_locataire", "prenom"]].rename(
-                columns={
-                    "nom": "Logement",
-                    "type": "Type",
-                    "loyer_hc": "Loyer HC (€)",
-                    "charges": "Charges (€)",
-                    "nom_locataire": "Nom Locataire",
-                    "prenom": "Prénom Locataire"
-                }
-            ),
-            use_container_width=True
-        )
+        biens_df = st.session_state.biens.copy()
+        locataires_df = st.session_state.locataires.copy() if not st.session_state.locataires.empty else pd.DataFrame()
+
+        if not locataires_df.empty and "bien_id" in locataires_df.columns:
+            df_display = biens_df.merge(
+                locataires_df,
+                left_on="id",
+                right_on="bien_id",
+                how="left",
+                suffixes=("_bien", "_locataire")
+            )
+        else:
+            df_display = biens_df.copy()
+            df_display["nom_locataire"] = "Aucun"
+            df_display["prenom"] = ""
+
+        # Construct safe display dataframe without KeyError
+        cols_to_select = {}
+        if "nom_bien" in df_display.columns:
+            cols_to_select["nom_bien"] = "Nom du Logement"
+        elif "nom" in df_display.columns:
+            cols_to_select["nom"] = "Nom du Logement"
+
+        if "type" in df_display.columns:
+            cols_to_select["type"] = "Type"
+        if "adresse" in df_display.columns:
+            cols_to_select["adresse"] = "Adresse"
+        if "loyer_hc" in df_display.columns:
+            cols_to_select["loyer_hc"] = "Loyer HC (€)"
+        if "charges" in df_display.columns:
+            cols_to_select["charges"] = "Charges (€)"
+
+        if "nom_locataire" in df_display.columns:
+            cols_to_select["nom_locataire"] = "Nom Locataire"
+        elif "nom_y" in df_display.columns:
+            cols_to_select["nom_y"] = "Nom Locataire"
+
+        if "prenom" in df_display.columns:
+            cols_to_select["prenom"] = "Prénom Locataire"
+
+        final_df = df_display[list(cols_to_select.keys())].rename(columns=cols_to_select)
+        st.dataframe(final_df, use_container_width=True)
     else:
-        st.info("Aucun bien enregistré.")
+        st.info("Aucun bien enregistré pour le moment. Allez dans le menu 'Biens Immobiliers' pour en ajouter un.")
 
 elif menu == "👤 Profil Bailleur":
-    st.markdown('<div class="main-header">Profil du Bailleur / Propriétaire</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Coordonnées légales utilisées pour la génération des baux et quittances</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">👤 Profil du Bailleur (Propriétaire)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Ces informations figurent obligatoirement sur les baux et quittances</div>', unsafe_allow_html=True)
 
     with st.form("form_bailleur"):
-        c1, c2, c3 = st.columns([1, 2, 2])
-        civilite = c1.selectbox(
-            "Civilité *", 
-            ["M.", "Mme", "Société / SCI"], 
-            index=["M.", "Mme", "Société / SCI"].index(st.session_state.bailleur.get("civilite", "M."))
-        )
-        nom = c2.text_input("Nom / Raison Sociale *", value=st.session_state.bailleur.get("nom", ""))
-        prenom = c3.text_input("Prénom (si particulier)", value=st.session_state.bailleur.get("prenom", ""))
+        col1, col2, col3 = st.columns([1, 2, 2])
+        civilite = col1.selectbox("Civilité", ["M.", "Mme", "Société / SCI"], index=["M.", "Mme", "Société / SCI"].index(st.session_state.bailleur.get("civilite", "M.")))
+        nom = col2.text_input("Nom ou Raison Sociale", st.session_state.bailleur.get("nom", ""))
+        prenom = col3.text_input("Prénom", st.session_state.bailleur.get("prenom", ""))
 
-        c4, c5 = st.columns(2)
-        date_naissance = c4.date_input("Date de naissance", value=st.session_state.bailleur.get("date_naissance", datetime.date(1980, 1, 1)))
-        lieu_naissance = c5.text_input("Lieu de naissance (ex: Paris 15e)", value=st.session_state.bailleur.get("lieu_naissance", ""))
+        col_d, col_l = st.columns(2)
+        date_naissance = col_d.text_input("Date de naissance / Création", st.session_state.bailleur.get("date_naissance", "1980-01-01"))
+        lieu_naissance = col_l.text_input("Lieu de naissance / Siège social", st.session_state.bailleur.get("lieu_naissance", "Paris"))
 
-        st.markdown("---")
-        st.subheader("📍 Adresse & Contact")
-
-        adresse_input = st.text_input("Adresse postale du bailleur *", value=st.session_state.bailleur.get("adresse", ""))
+        st.subheader("📍 Adresse du Bailleur")
+        saisie_adr_b = st.text_input("Rechercher l'adresse (Autocomplétion BAN)", value="", help="Tapez votre adresse puis sélectionnez ci-dessous")
+        propositions_b = chercher_adresse_ban(saisie_adr_b) if saisie_adr_b else []
         
-        # API BAN Suggestions
-        if adresse_input and len(adresse_input) >= 3:
-            sug_bailleur = chercher_adresse_ban(adresse_input)
-            if sug_bailleur:
-                choix_b = st.selectbox("Suggestions d'adresses trouvées :", sug_bailleur, key="sug_bailleur_select")
-                if st.checkbox("Utiliser cette adresse officielle", key="check_b_adresse"):
-                    adresse_input = choix_b
+        adresse_actuelle_b = st.session_state.bailleur.get("adresse", "")
+        if propositions_b:
+            adresse_finale_b = st.selectbox("Sélectionner l'adresse exacte trouvée :", propositions_b)
+        else:
+            adresse_finale_b = st.text_input("Adresse enregistrée", value=adresse_actuelle_b)
 
-        c6, c7 = st.columns(2)
-        email = c6.text_input("Email *", value=st.session_state.bailleur.get("email", ""))
-        telephone = c7.text_input("Téléphone *", value=st.session_state.bailleur.get("telephone", ""))
+        col_e, col_t = st.columns(2)
+        email = col_e.text_input("Adresse Email", st.session_state.bailleur.get("email", ""))
+        telephone = col_t.text_input("Téléphone", st.session_state.bailleur.get("telephone", ""))
 
-        submit_bailleur = st.form_submit_button("💾 Enregistrer le profil bailleur")
-
-        if submit_bailleur:
+        submit_b = st.form_submit_button("💾 Enregistrer le Profil Bailleur")
+        if submit_b:
             st.session_state.bailleur = {
                 "civilite": civilite,
                 "nom": nom,
                 "prenom": prenom,
                 "date_naissance": date_naissance,
                 "lieu_naissance": lieu_naissance,
-                "adresse": adresse_input,
+                "adresse": adresse_finale_b,
                 "email": email,
                 "telephone": telephone
             }
             st.success("Profil bailleur mis à jour avec succès !")
 
-elif menu == "🏢 Biens Immobiliers":
-    st.markdown('<div class="main-header">Gestion des Biens Immobiliers</div>', unsafe_allow_html=True)
+elif menu == "🏡 Biens Immobiliers":
+    st.markdown('<div class="main-header">🏡 Gestion des Biens Immobiliers</div>', unsafe_allow_html=True)
 
-    with st.expander("➕ Ajouter un nouveau logement", expanded=False):
+    with st.expander("➕ Ajouter un nouveau logement", expanded=True):
         with st.form("form_bien"):
-            nom_bien = st.text_input("Nom / Libellé du bien (ex: T2 Centre-Ville)")
+            col1, col2 = st.columns(2)
+            nom_bien = col1.text_input("Nom / Identifiant du bien", placeholder="Ex: Studio Centre Ville - Apt 12")
+            type_bien = col2.selectbox("Type de location", ["Meublé", "Nu (Non meublé)", "Garage / Parking", "Local Commercial"])
+
+            st.write("📍 **Adresse du Logement**")
+            saisie_adr = st.text_input("Recherche d'adresse (API Base Adresse Nationale)", placeholder="Tapez ex: 10 rue de la République Lyon")
+            props_adr = chercher_adresse_ban(saisie_adr) if saisie_adr else []
             
-            adresse_bien = st.text_input("Adresse complète du logement *")
-            if adresse_bien and len(adresse_bien) >= 3:
-                sug_biens = chercher_adresse_ban(adresse_bien)
-                if sug_biens:
-                    choix_bien = st.selectbox("Adresses suggérées :", sug_biens, key="sug_bien_select")
-                    if st.checkbox("Valider l'adresse suggérée", key="check_bien_adresse"):
-                        adresse_bien = choix_bien
+            if props_adr:
+                adresse_choisie = st.selectbox("Propositions d'adresses officielles :", props_adr)
+            else:
+                adresse_choisie = st.text_input("Saisie manuelle si non trouvée", value=saisie_adr)
 
-            col_a, col_b, col_c = st.columns(3)
-            type_bail = col_a.selectbox("Type de bail", ["Nu", "Meublé"])
-            surface = col_b.number_input("Surface (m²)", min_value=1.0, value=35.0, step=0.5)
-            pieces = col_c.number_input("Nombre de pièces", min_value=1, value=2)
+            col3, col4, col5 = st.columns(3)
+            surface = col3.number_input("Surface (m²)", min_value=1.0, value=35.0, step=0.5)
+            pieces = col4.number_input("Nombre de pièces main", min_value=1, value=2)
+            mode_chauffage = col5.selectbox("Chauffage / Eau", ["Individuel Électrique", "Individuel Gaz", "Collectif", "Autre"])
 
-            col_d, col_e, col_f = st.columns(3)
-            loyer_hc = col_d.number_input("Loyer Hors Charges (€)", min_value=0.0, value=650.0, step=10.0)
-            charges = col_e.number_input("Provisions sur charges (€)", min_value=0.0, value=50.0, step=5.0)
-            depot = col_f.number_input("Dépôt de garantie (€)", min_value=0.0, value=650.0, step=10.0)
+            col6, col7, col8 = st.columns(3)
+            loyer_hc = col6.number_input("Loyer Hors Charges (€)", min_value=0.0, value=550.0, step=10.0)
+            charges = col7.number_input("Provision sur Charges (€)", min_value=0.0, value=50.0, step=5.0)
+            depot = col8.number_input("Dépôt de garantie (€)", min_value=0.0, value=550.0, step=50.0)
 
-            submit_bien = st.form_submit_button("Créer le bien")
-
+            submit_bien = st.form_submit_button("➕ Ajouter ce bien")
             if submit_bien:
-                nouveau_id = get_prochain_id(st.session_state.biens)
-                nouveau_bien = {
-                    "id": nouveau_id,
-                    "nom": nom_bien,
-                    "adresse": adresse_bien,
-                    "type": type_bail,
-                    "surface": surface,
-                    "pieces": pieces,
-                    "loyer_hc": loyer_hc,
-                    "charges": charges,
-                    "depot_garantie": depot,
-                    "date_irl": datetime.date.today(),
-                    "irl_base": 140.0
-                }
-                st.session_state.biens = pd.concat([st.session_state.biens, pd.DataFrame([nouveau_bien])], ignore_index=True)
-                st.success("Nouveau logement enregistré !")
-                st.rerun()
+                if not nom_bien or not adresse_choisie:
+                    st.error("Veuillez indiquer un nom et une adresse pour le logement.")
+                else:
+                    new_id = get_next_id(st.session_state.biens)
+                    new_row = pd.DataFrame([{
+                        "id": new_id,
+                        "nom_bien": nom_bien,
+                        "type": type_bien,
+                        "adresse": adresse_choisie,
+                        "surface": surface,
+                        "pieces": pieces,
+                        "loyer_hc": loyer_hc,
+                        "charges": charges,
+                        "depot_garantie": depot,
+                        "mode_chauffage": mode_chauffage
+                    }])
+                    st.session_state.biens = pd.concat([st.session_state.biens, new_row], ignore_index=True)
+                    st.success(f"Logement '{nom_bien}' ajouté avec succès !")
+                    st.rerun()
 
-    st.subheader("Parc immobilier enregistré")
+    st.subheader("📜 Liste de vos logements")
     if not st.session_state.biens.empty:
         st.dataframe(st.session_state.biens, use_container_width=True)
     else:
         st.info("Aucun logement enregistré.")
 
 elif menu == "👥 Locataires":
-    st.markdown('<div class="main-header">Gestion des Locataires</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">👥 Gestion des Locataires</div>', unsafe_allow_html=True)
 
-    with st.expander("➕ Ajouter un nouveau locataire", expanded=True):
+    with st.expander("➕ Enregistrer un nouveau locataire", expanded=True):
         with st.form("form_locataire"):
-            c1, c2, c3 = st.columns([1, 2, 2])
-            civilite_loc = c1.selectbox("Civilité *", ["M.", "Mme"])
-            nom_loc = c2.text_input("Nom de famille *")
-            prenom_loc = c3.text_input("Prénom *")
+            col1, col2, col3 = st.columns([1, 2, 2])
+            civilite_loc = col1.selectbox("Civilité", ["M.", "Mme"])
+            nom_loc = col2.text_input("Nom de famille")
+            prenom_loc = col3.text_input("Prénom")
 
-            c4, c5 = st.columns(2)
-            date_naiss_loc = c4.date_input("Date de naissance *", value=datetime.date(1995, 1, 1))
-            lieu_naiss_loc = c5.text_input("Lieu de naissance * (ex: Lyon 6e)")
+            col4, col5 = st.columns(2)
+            date_naiss_loc = col4.text_input("Date de naissance", placeholder="JJ/MM/AAAA (ex: 12/04/1995)")
+            lieu_naiss_loc = col5.text_input("Lieu de naissance", placeholder="Ex: Lyon (69)")
 
-            st.markdown("---")
-            st.write("**📍 Adresse actuelle (avant emménagement)**")
-            adresse_loc = st.text_input("Rechercher l'adresse actuelle *")
+            st.write("📍 **Adresse actuelle du locataire (avant emménagement)**")
+            saisie_adr_loc = st.text_input("Chercher l'adresse actuelle", placeholder="Tapez l'ancienne adresse du locataire")
+            props_adr_loc = chercher_adresse_ban(saisie_adr_loc) if saisie_adr_loc else []
+            if props_adr_loc:
+                adresse_actuelle_loc = st.selectbox("Choisir l'adresse trouvée :", props_adr_loc)
+            else:
+                adresse_actuelle_loc = st.text_input("Saisie manuelle adresse actuelle", value=saisie_adr_loc)
+
+            col6, col7 = st.columns(2)
+            email_loc = col6.text_input("Adresse Email")
+            tel_loc = col7.text_input("Numéro de Téléphone")
+
+            st.divider()
+            st.write("🏠 **Attribution d'un logement**")
             
-            if adresse_loc and len(adresse_loc) >= 3:
-                sug_loc = chercher_adresse_ban(adresse_loc)
-                if sug_loc:
-                    choix_loc = st.selectbox("Suggestions d'adresses officielles :", sug_loc, key="sug_loc_select")
-                    if st.checkbox("Valider cette adresse", key="check_loc_adresse"):
-                        adresse_loc = choix_loc
-
-            c6, c7 = st.columns(2)
-            email_loc = c6.text_input("Email *")
-            tel_loc = c7.text_input("Téléphone *")
-
-            st.markdown("---")
             biens_dispos = st.session_state.biens
-            bien_id_choisi = None
+            options_biens = {"Aucun logement attribué": None}
             if not biens_dispos.empty:
-                dict_biens = dict(zip(biens_dispos['id'], biens_dispos['nom']))
-                bien_id_choisi = st.selectbox("Attribuer au logement :", options=list(dict_biens.keys()), format_func=lambda x: dict_biens[x])
+                for _, row in biens_dispos.iterrows():
+                    options_biens[f"{row['nom_bien']} ({row['adresse']})"] = row["id"]
             
-            date_entree = st.date_input("Date d'entrée dans les lieux", value=datetime.date.today())
+            bien_selectionne_label = st.selectbox("Assigner à un logement :", list(options_biens.keys()))
+            bien_id_associe = options_biens[bien_selectionne_label]
 
-            submit_loc = st.form_submit_button("Enregistrer le locataire")
-
+            submit_loc = st.form_submit_button("➕ Enregistrer le locataire")
             if submit_loc:
-                nouveau_id_loc = get_prochain_id(st.session_state.locataires)
-                nouveau_loc = {
-                    "id": nouveau_id_loc,
-                    "civilite": civilite_loc,
-                    "nom": nom_loc,
-                    "prenom": prenom_loc,
-                    "date_naissance": date_naiss_loc,
-                    "lieu_naissance": lieu_naiss_loc,
-                    "adresse_actuelle": adresse_loc,
-                    "email": email_loc,
-                    "telephone": tel_loc,
-                    "bien_id": bien_id_choisi,
-                    "date_entree": date_entree
-                }
-                st.session_state.locataires = pd.concat([st.session_state.locataires, pd.DataFrame([nouveau_loc])], ignore_index=True)
-                st.success("Locataire enregistré avec succès !")
-                st.rerun()
+                if not nom_loc or not prenom_loc:
+                    st.error("Veuillez remplir au moins le nom et le prénom.")
+                else:
+                    new_id_loc = get_next_id(st.session_state.locataires)
+                    new_loc_row = pd.DataFrame([{
+                        "id": new_id_loc,
+                        "civilite": civilite_loc,
+                        "nom": nom_loc,
+                        "prenom": prenom_loc,
+                        "date_naissance": date_naiss_loc,
+                        "lieu_naissance": lieu_naiss_loc,
+                        "adresse_actuelle": adresse_actuelle_loc,
+                        "email": email_loc,
+                        "telephone": tel_loc,
+                        "bien_id": bien_id_associe
+                    }])
+                    st.session_state.locataires = pd.concat([st.session_state.locataires, new_loc_row], ignore_index=True)
+                    st.success(f"Locataire {prenom_loc} {nom_loc} enregistré !")
+                    st.rerun()
 
-    st.subheader("Répertoire des locataires")
+    st.subheader("📋 Liste des locataires enregistrés")
     if not st.session_state.locataires.empty:
         st.dataframe(st.session_state.locataires, use_container_width=True)
     else:
-        st.info("Aucun locataire enregistré.")
+        st.info("Aucun locataire enregistré pour le moment.")
 
-elif menu == "📜 Générateur de Bail":
-    st.markdown('<div class="main-header">Générateur de Bail Conforme</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Contrat de location d\'habitation principale (Loi du 6 juillet 1989 / Loi ALUR / Loi ÉLAN)</div>', unsafe_allow_html=True)
+elif menu == "📜 Générateur de Bail (ALUR)":
+    st.markdown('<div class="main-header">📜 Générateur de Contrat de Bail conforme (ALUR / ÉLAN)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Générez un contrat complet et légal prêt à l\'impression</div>', unsafe_allow_html=True)
 
     if st.session_state.biens.empty or st.session_state.locataires.empty:
-        st.warning("⚠️ Veuillez d'abord ajouter au moins un bien immobilier et un locataire.")
+        st.warning("⚠️ Pour générer un bail, vous devez avoir enregistré au moins **un bien** et **un locataire**.")
     else:
-        c_b, c_l = st.columns(2)
-        dict_b = dict(zip(st.session_state.biens['id'], st.session_state.biens['nom']))
-        bien_sel_id = c_b.selectbox("Sélectionnez le logement :", options=list(dict_b.keys()), format_func=lambda x: dict_b[x])
+        col_b, col_l = st.columns(2)
         
-        locs_filtr = st.session_state.locataires[st.session_state.locataires['bien_id'] == bien_sel_id]
-        if locs_filtr.empty:
-            locs_filtr = st.session_state.locataires
+        # Select Property
+        biens_dict = {f"{row['nom_bien']} - {row['adresse']}": row['id'] for _, row in st.session_state.biens.iterrows()}
+        bien_label = col_b.selectbox("1. Sélectionner le Logement", list(biens_dict.keys()))
+        selected_bien_id = biens_dict[bien_label]
+        bien_info = st.session_state.biens[st.session_state.biens['id'] == selected_bien_id].iloc[0]
 
-        dict_l = dict(zip(locs_filtr['id'], locs_filtr['nom'] + " " + locs_filtr['prenom']))
-        loc_sel_id = c_l.selectbox("Sélectionnez le locataire :", options=list(dict_l.keys()), format_func=lambda x: dict_l[x])
+        # Select Tenant
+        locs_dict = {f"{row['civilite']} {row['prenom']} {row['nom']}": row['id'] for _, row in st.session_state.locataires.iterrows()}
+        loc_label = col_l.selectbox("2. Sélectionner le Locataire", list(locs_dict.keys()))
+        selected_loc_id = locs_dict[loc_label]
+        loc_info = st.session_state.locataires[st.session_state.locataires['id'] == selected_loc_id].iloc[0]
 
-        info_bailleur = st.session_state.bailleur
-        info_bien = st.session_state.biens[st.session_state.biens['id'] == bien_sel_id].iloc[0]
-        info_loc = st.session_state.locataires[st.session_state.locataires['id'] == loc_sel_id].iloc[0]
+        st.subheader("⚙️ Conditions du bail")
+        col_c1, col_c2, col_c3 = st.columns(3)
+        date_debut = col_c1.date_input("Date de prise d'effet du bail", datetime.date.today())
+        duree_annees = col_c2.number_input("Durée du bail (Années)", min_value=1, value=1 if bien_info['type'] == "Meublé" else 3)
+        jour_paiement = col_c3.number_input("Jour du mois pour le paiement", min_value=1, max_value=31, value=5)
 
-        st.divider()
+        b_info = st.session_state.bailleur
 
-        with st.expander("⚙️ Options et clauses particulières du bail", expanded=True):
-            col_g1, col_g2 = st.columns(2)
-            date_effet = col_g1.date_input("Date de prise d'effet du contrat", value=info_loc.get('date_entree', datetime.date.today()))
-            
-            duree_ans = 3 if info_bien['type'] == 'Nu' else 1
-            duree_bail = col_g2.number_input("Durée du bail (en années)", min_value=1, value=duree_ans)
+        # Generating Lease Markdown Document
+        lease_text = f"""
+# CONTRAT DE BAIL DE LOCATION D'HABITATION
+*(Soumis au régime de la loi n° 89-462 du 6 juillet 1989 et conforme à la loi ALUR)*
 
-            col_g3, col_g4 = st.columns(2)
-            jour_paiement = col_g3.number_input("Jour du mois pour l'échéance du loyer", min_value=1, max_value=31, value=5)
-            mode_paiement = col_g4.selectbox("Mode de règlement retenu", ["Virement bancaire", "Prélèvement automatique", "Chèque"])
+---
 
-        loyer_total = info_bien['loyer_hc'] + info_bien['charges']
-        date_naiss_loc_str = pd.to_datetime(info_loc['date_naissance']).strftime('%d/%m/%Y') if info_loc['date_naissance'] else ""
-        date_naiss_bai_str = pd.to_datetime(info_bailleur['date_naissance']).strftime('%d/%m/%Y') if info_bailleur.get('date_naissance') else ""
+### I. DÉSIGNATION DES PARTIES
 
-        html_bail = f"""
-        <div class="lease-box">
-            <h2 style="text-align: center; color: #1E3A8A; text-transform: uppercase; margin-bottom: 5px;">CONTRAT DE LOCATION D'HABITATION</h2>
-            <p style="text-align: center; font-size: 0.95em; color: #4B5563; font-weight: bold;">
-                Soumis au régime de la loi n° 89-462 du 6 juillet 1989 modifiée par la loi ALUR n° 2014-366 et la loi ÉLAN n° 2018-1021<br>
-                <em>Logement à usage exclusif d'habitation principale - Location {info_bien['type'].upper()}</em>
-            </p>
-            <hr style="border: 0; height: 1px; background: #CBD5E1; margin: 20px 0;">
+**LE BAILLEUR (Propriétaire) :**
+- **Nom et Prénom / Raison sociale :** {b_info.get('civilite', '')} {b_info.get('prenom', '')} {b_info.get('nom', '')}
+- **Date et lieu de naissance :** Né(e) le {b_info.get('date_naissance', 'N/A')} à {b_info.get('lieu_naissance', 'N/A')}
+- **Demeurant à :** {b_info.get('adresse', 'N/A')}
+- **Email :** {b_info.get('email', 'N/A')} | **Tél :** {b_info.get('telephone', 'N/A')}
 
-            <h3 style="color: #1E40AF; border-bottom: 1px solid #93C5FD; padding-bottom: 4px;">I. DÉSIGNATION DES PARTIES</h3>
-            <p><strong>LE BAILLEUR (Propriétaire) :</strong><br>
-            Civilité / Nom : <strong>{info_bailleur.get('civilite', 'M.')} {info_bailleur.get('nom', '')} {info_bailleur.get('prenom', '')}</strong><br>
-            Né(e) le : {date_naiss_bai_str} à {info_bailleur.get('lieu_naissance', 'N/C')}<br>
-            Demeurant à : <strong>{info_bailleur.get('adresse', 'N/C')}</strong><br>
-            Adresse email : {info_bailleur.get('email', '')} — Tél : {info_bailleur.get('telephone', '')}
-            </p>
+**LE LOCATAIRE :**
+- **Nom et Prénom :** {loc_info.get('civilite', '')} {loc_info.get('prenom', '')} {loc_info.get('nom', '')}
+- **Date et lieu de naissance :** Né(e) le {loc_info.get('date_naissance', 'N/A')} à {loc_info.get('lieu_naissance', 'N/A')}
+- **Adresse précédente :** {loc_info.get('adresse_actuelle', 'N/A')}
+- **Email :** {loc_info.get('email', 'N/A')} | **Tél :** {loc_info.get('telephone', 'N/A')}
 
-            <p><strong>LE LOCATAIRE :</strong><br>
-            Civilité / Nom : <strong>{info_loc.get('civilite', 'M.')} {info_loc.get('nom', '')} {info_loc.get('prenom', '')}</strong><br>
-            Né(e) le : {date_naiss_loc_str} à {info_loc.get('lieu_naissance', 'N/C')}<br>
-            Adresse actuelle : <strong>{info_loc.get('adresse_actuelle', 'N/C')}</strong><br>
-            Adresse email : {info_loc.get('email', '')} — Tél : {info_loc.get('telephone', '')}
-            </p>
+---
 
-            <h3 style="color: #1E40AF; border-bottom: 1px solid #93C5FD; padding-bottom: 4px;">II. OBJET DU CONTRAT ET DESCRIPTION DU LOGEMENT</h3>
-            <p>Le bailleur loue au locataire le logement désigné ci-après, situé à :<br>
-            <strong style="font-size: 1.1em; color: #1E293B;">{info_bien['adresse']}</strong></p>
-            <ul>
-                <li><strong>Désignation :</strong> {info_bien['nom']}</li>
-                <li><strong>Type de location :</strong> {info_bien['type']}</li>
-                <li><strong>Surface habitable :</strong> {info_bien['surface']} m²</li>
-                <li><strong>Nombre de pièces principales :</strong> {info_bien['pieces']}</li>
-            </ul>
+### II. OBJET ET DÉSIGNATION DES LIEUX
+- **Adresse du logement loué :** {bien_info['adresse']}
+- **Type de contrat :** Location en {bien_info['type']}
+- **Surface habitable :** {bien_info['surface']} m²
+- **Nombre de pièces principales :** {bien_info['pieces']}
+- **Équipements & Chauffage :** {bien_info['mode_chauffage']}
 
-            <h3 style="color: #1E40AF; border-bottom: 1px solid #93C5FD; padding-bottom: 4px;">III. DURÉE ET PRISE D'EFFET</h3>
-            <p>Le présent bail est conclu pour une durée fixe de <strong>{duree_bail} an(s)</strong> prenant effet à compter du <strong>{date_effet.strftime('%d/%m/%Y')}</strong>.</p>
+---
 
-            <h3 style="color: #1E40AF; border-bottom: 1px solid #93C5FD; padding-bottom: 4px;">IV. CONDITIONS FINANCIÈRES</h3>
-            <ul>
-                <li><strong>Loyer mensuel hors charges :</strong> {info_bien['loyer_hc']:.2f} €</li>
-                <li><strong>Provision mensuelle sur charges :</strong> {info_bien['charges']:.2f} €</li>
-                <li><strong>TOTAL MENSUEL À PAYER :</strong> <strong style="color: #1E40AF; font-size: 1.1em;">{loyer_total:.2f} €</strong></li>
-            </ul>
-            <p>Le loyer est payable d'avance le <strong>{jour_paiement}</strong> de chaque mois par <strong>{mode_paiement}</strong>.</p>
-            <p><strong>Dépôt de garantie :</strong> La somme de <strong>{info_bien['depot_garantie']:.2f} €</strong> est versée ce jour par le locataire.</p>
+### III. DURÉE ET PRISE D'EFFET
+Le présent contrat est conclu pour une durée de **{duree_annees} an(s)** prenant effet le **{date_debut.strftime('%d/%m/%Y')}**.
 
-            <h3 style="color: #1E40AF; border-bottom: 1px solid #93C5FD; padding-bottom: 4px;">V. CLAUSES LÉGALES & SIGNATURES</h3>
-            <p>Le contrat est assujetti au respect de l'obligation d'assurance risques locatifs, de jouissance paisible des lieux et à la révision annuelle automatique du loyer selon l'Indice de Référence des Loyers (IRL) publié par l'INSEE.</p>
+---
 
-            <br><br>
-            <div style="display: flex; justify-content: space-between; margin-top: 30px;">
-                <div style="width: 45%;">
-                    Fait à ................................., le ....................<br><br>
-                    <strong>Signature du Bailleur</strong><br>
-                    <em>(Précédée de la mention "Lu et approuvé")</em>
-                </div>
-                <div style="width: 45%;">
-                    <br><br>
-                    <strong>Signature du Locataire</strong><br>
-                    <em>(Précédée de la mention "Lu et approuvé")</em>
-                </div>
-            </div>
-        </div>
+### IV. CONDITIONS FINANCIÈRES
+- **Loyer mensuel hors charges :** {bien_info['loyer_hc']:.2f} €
+- **Provision mensuelle sur charges :** {bien_info['charges']:.2f} €
+- **TOTAL MENSUEL :** **{(bien_info['loyer_hc'] + bien_info['charges']):.2f} €**
+- **Paiement :** Le loyer et les charges sont payables d'avance le **{jour_paiement}** de chaque mois.
+- **Dépôt de garantie :** Un dépôt de garantie d'un montant de **{bien_info['depot_garantie']:.2f} €** est versé ce jour.
+
+---
+
+### V. CLAUSES LEGALES & SIGNATURES
+Fait à __________________________, le ______________________ en 2 exemplaires originaux.
+
+**Signature du Bailleur**                                   **Signature du Locataire**
+*(Précédée de la mention "Lu et approuvé")*                     *(Précédée de la mention "Lu et approuvé")*
         """
 
-        st.subheader("👁️ Aperçu du Bail de Location")
-        st.markdown(html_bail, unsafe_allow_html=True)
+        st.divider()
+        st.subheader("📄 Aperçu du Contrat de Bail")
+        st.markdown(f"<div class='card'>{lease_text}</div>", unsafe_allow_html=True)
+
+        st.download_button(
+            label="📥 Télécharger le Bail au format Texte / Markdown",
+            data=lease_text,
+            file_name=f"Bail_{loc_info['nom']}_{bien_info['nom_bien']}.md",
+            mime="text/markdown"
+        )
+
+elif menu == "🧾 Suivi des Loyers & Quittances":
+    st.markdown('<div class="main-header">🧾 Suivi des Loyers & Quittances</div>', unsafe_allow_html=True)
+
+    if st.session_state.biens.empty or st.session_state.locataires.empty:
+        st.info("Veuillez d'abord ajouter des biens et des locataires.")
+    else:
+        st.subheader("➕ Déclarer un loyer reçu")
+        with st.form("form_loyer"):
+            col1, col2, col3 = st.columns(3)
+            
+            biens_list = {row['nom_bien']: row['id'] for _, row in st.session_state.biens.iterrows()}
+            b_selected = col1.selectbox("Bien", list(biens_list.keys()))
+            b_id = biens_list[b_selected]
+
+            locs_list = {f"{row['prenom']} {row['nom']}": row['id'] for _, row in st.session_state.locataires.iterrows()}
+            l_selected = col2.selectbox("Locataire", list(locs_list.keys()))
+            l_id = locs_list[l_selected]
+
+            mois = col3.text_input("Période / Mois", value=datetime.date.today().strftime("%B %Y"))
+
+            bien_data = st.session_state.biens[st.session_state.biens['id'] == b_id].iloc[0]
+            col4, col5, col6 = st.columns(3)
+            l_hc = col4.number_input("Loyer HC (€)", value=float(bien_data['loyer_hc']))
+            l_ch = col5.number_input("Charges (€)", value=float(bien_data['charges']))
+            date_p = col6.date_input("Date du règlement", datetime.date.today())
+
+            submit_paye = st.form_submit_button("✅ Enregistrer le paiement & Éditer la Quittance")
+            if submit_paye:
+                new_l_id = get_next_id(st.session_state.loyers)
+                new_loyer = pd.DataFrame([{
+                    "id": new_l_id,
+                    "bien_id": b_id,
+                    "locataire_id": l_id,
+                    "mois_annee": mois,
+                    "montant_hc": l_hc,
+                    "montant_charges": l_ch,
+                    "statut": "Payé",
+                    "date_paiement": date_p.strftime('%d/%m/%Y')
+                }])
+                st.session_state.loyers = pd.concat([st.session_state.loyers, new_loyer], ignore_index=True)
+                st.success("Paiement enregistré !")
 
         st.divider()
-        st.download_button(
-            label="📥 Télécharger le Bail Conforme (Format HTML imprimable)",
-            data=html_bail,
-            file_name=f"Bail_{info_loc['nom']}_{info_bien['nom']}.html",
-            mime="text/html"
-        )
+        st.subheader("📄 Générateur de Quittance de Loyer")
+        
+        b_prof = st.session_state.bailleur
+        if not st.session_state.loyers.empty:
+            loyer_sel_idx = st.selectbox("Sélectionner un loyer payé pour afficher la quittance :", st.session_state.loyers.index)
+            r_loyer = st.session_state.loyers.loc[loyer_sel_idx]
+            
+            r_loc = st.session_state.locataires[st.session_state.locataires['id'] == r_loyer['locataire_id']].iloc[0]
+            r_bien = st.session_state.biens[st.session_state.biens['id'] == r_loyer['bien_id']].iloc[0]
 
-elif menu == "💶 Loyers & Quittances":
-    st.markdown('<div class="main-header">Gestion des Loyers & Quittances</div>', unsafe_allow_html=True)
+            quittance_text = f"""
+================================================================================
+                           QUITTANCE DE LOYER
+================================================================================
 
-    if st.session_state.locataires.empty:
-        st.warning("Aucun locataire enregistré.")
-    else:
-        st.subheader("Générer une Quittance de Loyer")
-        loc_select_q = st.selectbox(
-            "Sélectionner le locataire", 
-            options=st.session_state.locataires['id'].tolist(),
-            format_func=lambda x: f"{st.session_state.locataires[st.session_state.locataires['id']==x]['nom'].values[0]} {st.session_state.locataires[st.session_state.locataires['id']==x]['prenom'].values[0]}"
-        )
-
-        loc_data = st.session_state.locataires[st.session_state.locataires['id'] == loc_select_q].iloc[0]
-        bien_data = st.session_state.biens[st.session_state.biens['id'] == loc_data['bien_id']].iloc[0]
-        bailleur_data = st.session_state.bailleur
-
-        mois_quittance = st.text_input("Mois concerné (ex: Août 2026)", value="Août 2026")
-
-        loyer_total_q = bien_data['loyer_hc'] + bien_data['charges']
-
-        text_quittance = f"""
-===================================================================
-                        QUITTANCE DE LOYER
-===================================================================
+Période : {r_loyer['mois_annee']}
 
 BAILLEUR :
-{bailleur_data.get('civilite', 'M.')} {bailleur_data.get('nom', '')} {bailleur_data.get('prenom', '')}
-Adresse : {bailleur_data.get('adresse', '')}
+{b_prof.get('civilite', '')} {b_prof.get('prenom', '')} {b_prof.get('nom', '')}
+{b_prof.get('adresse', '')}
 
 LOCATAIRE :
-{loc_data['civilite']} {loc_data['nom']} {loc_data['prenom']}
-Adresse du logement loué : {bien_data['adresse']}
+{r_loc.get('civilite', '')} {r_loc.get('prenom', '')} {r_loc.get('nom', '')}
+Apt situé au : {r_bien['adresse']}
 
-PÉRIODE : {mois_quittance}
-
+--------------------------------------------------------------------------------
 DÉTAIL DU RÈGLEMENT :
-- Loyer Hors Charges : {bien_data['loyer_hc']:.2f} €
-- Provision sur Charges : {bien_data['charges']:.2f} €
--------------------------------------------------------------------
-TOTAL REÇU : {loyer_total_q:.2f} €
+- Loyer Hors Charges : {r_loyer['montant_hc']:.2f} €
+- Provision pour charges : {r_loyer['montant_charges']:.2f} €
+--------------------------------------------------------------------------------
+TOTAL REÇU : {(r_loyer['montant_hc'] + r_loyer['montant_charges']):.2f} €
 
-Je soussigné(e) {bailleur_data.get('nom', '')} {bailleur_data.get('prenom', '')}, propriétaire du logement 
-désigné ci-dessus, reconnais avoir reçu la somme de {loyer_total_q:.2f} € 
+Je soussigné(e) {b_prof.get('prenom', '')} {b_prof.get('nom', '')}, propriétaire du logement 
+désigné ci-dessus, reconnais avoir reçu la somme de {(r_loyer['montant_hc'] + r_loyer['montant_charges']):.2f} € 
 au titre du paiement du loyer et des charges pour la période mentionnée.
 
-Fait le {datetime.date.today().strftime('%d/%m/%Y')}
-        """
+Date du règlement : {r_loyer['date_paiement']}
 
-        st.code(text_quittance, language="text")
+Fait pour valoir ce que de droit.
+Signature du Bailleur.
+================================================================================
+            """
+            st.code(quittance_text, language="text")
 
-        st.download_button(
-            label="📄 Télécharger la Quittance (.txt)",
-            data=text_quittance,
-            file_name=f"Quittance_{loc_data['nom']}_{mois_quittance}.txt",
-            mime="text/plain"
-        )
+            st.download_button(
+                label="📥 Télécharger la Quittance (Fichier texte)",
+                data=quittance_text,
+                file_name=f"Quittance_{r_loc['nom']}_{r_loyer['mois_annee']}.txt",
+                mime="text/plain"
+            )
 
-elif menu == "📈 Révision IRL":
-    st.markdown('<div class="main-header">Calculateur de Révision de Loyer (IRL)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Calcul officiel de révision du loyer d\'après les indices INSEE</div>', unsafe_allow_html=True)
+elif menu == "🧮 Calculateur Révision IRL":
+    st.markdown('<div class="main-header">🧮 Calculateur de Révision de Loyer (IRL)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Formule légale : Nouveau Loyer = Loyer Actuel x (Nouvel IRL / Ancien IRL)</div>', unsafe_allow_html=True)
 
-    c_r1, c_r2, c_r3 = st.columns(3)
-    loyer_actuel = c_r1.number_input("Loyer actuel Hors Charges (€)", min_value=0.0, value=750.0, step=10.0)
-    ancien_irl = c_r2.number_input("Ancien IRL (Trimestre N-1)", min_value=100.0, value=141.03, step=0.01)
-    nouvel_irl = c_r3.number_input("Nouvel IRL publié", min_value=100.0, value=144.21, step=0.01)
+    col1, col2 = st.columns(2)
+    loyer_actuel = col1.number_input("Loyer HC Actuel (€)", min_value=0.0, value=600.0, step=10.0)
+    irl_ancien = col2.number_input("Ancien Indice IRL (Ex: Trimestre A-1)", value=141.03, step=0.01)
 
-    if ancien_irl > 0:
-        nouveau_loyer = (loyer_actuel * nouvel_irl) / ancien_irl
+    irl_nouveau = st.number_input("Nouveau Indice IRL publié", value=144.21, step=0.01)
+
+    if irl_ancien > 0:
+        nouveau_loyer = loyer_actuel * (irl_nouveau / irl_ancien)
         augmentation = nouveau_loyer - loyer_actuel
-        pourcentage = (augmentation / loyer_actuel) * 100
 
-        st.success(f"### Nouveau Loyer Révisé : {nouveau_loyer:.2f} € HC / mois")
-        st.info(f"Augmentation mensuelle : +{augmentation:.2f} € (+{pourcentage:.2f} %)")
+        st.success(f"💶 **Nouveau Loyer révisé estimé : {nouveau_loyer:.2f} € HC**")
+        st.info(f"📈 Augmentation mensuelle : +{augmentation:.2f} € (+{(augmentation/loyer_actuel*100):.2f} %)")
