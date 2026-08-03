@@ -477,6 +477,6 @@ elif menu == "📐 Calculateur IRL & Rentabilité":
 
         st.metric("Rentabilité Brute", f"{renta_brute:.2f} %")
         st.metric("Rentabilité Nette (avant impôts)", f"{renta_nette:.2f} %")
-```eof
+
 
 
